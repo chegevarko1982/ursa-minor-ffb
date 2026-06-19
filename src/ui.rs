@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use windows::Win32::Foundation::HWND;
 
@@ -98,6 +98,10 @@ pub struct UiState {
 
     pub rx_ui: Receiver<UiCmd>,
     pub tx_ui: Sender<UiCmd>,
+
+    // Сохранение настроек ползунков на диск
+    pub saved_config_rev: u64,
+    pub pending_save_at: Option<Instant>,
 }
 
 impl UiState {
@@ -416,6 +420,11 @@ impl eframe::App for UiState {
                         ui.horizontal(|ui| {
                             if ui.button("Reset to defaults").clicked() {
                                 self.config.set(RumbleConfig::default());
+                                if let Ok(p) = crate::settings::save(&self.config.get()) {
+                                    self.logs.push(format!("Settings reset and saved → {}", p.display()));
+                                }
+                                self.saved_config_rev = self.config.current_rev();
+                                self.pending_save_at = None;
                             }
                         });
 
@@ -517,6 +526,41 @@ impl eframe::App for UiState {
 
                 ctx.request_repaint_after(Duration::from_millis(60));
             });
+        }
+
+        // Откладываем сохранение настроек на диск, чтобы не писать файл
+        // на каждый кадр во время перетаскивания слайдера.
+        {
+            let current_rev = self.config.current_rev();
+            if current_rev != self.saved_config_rev {
+                // Конфиг изменился — (пере)запускаем таймер ожидания.
+                self.pending_save_at = Some(Instant::now() + Duration::from_millis(500));
+            }
+            if let Some(at) = self.pending_save_at {
+                if Instant::now() >= at {
+                    let cfg = self.config.get();
+                    match crate::settings::save(&cfg) {
+                        Ok(p) => self.logs.push(format!("Settings saved → {}", p.display())),
+                        Err(e) => self.logs.push(format!("Failed to save settings: {}", e)),
+                    }
+                    self.saved_config_rev = current_rev;
+                    self.pending_save_at = None;
+                } else {
+                    // Пока ждём, но не реагировали на смену rev в этом кадре — перерисуем позже.
+                    ctx.request_repaint_after(Duration::from_millis(120));
+                }
+            }
+        }
+
+        if ctx.input(|i| i.viewport().close_requested()) {
+            // Сохраняем синхронно перед закрытием, чтобы не потерять последние изменения.
+            let cfg = self.config.get();
+            if self.config.current_rev() != self.saved_config_rev {
+                match crate::settings::save(&cfg) {
+                    Ok(p) => self.logs.push(format!("Settings saved on exit → {}", p.display())),
+                    Err(e) => self.logs.push(format!("Failed to save settings on exit: {}", e)),
+                }
+            }
         }
 
         loop {

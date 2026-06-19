@@ -27,7 +27,7 @@ fn main() -> Result<()> {
 
     let controller_connected = Arc::new(AtomicBool::new(false));
     let last_vars = Arc::new(Mutex::new(None::<FlightVars>));
-    let config = Arc::new(ConfigShared::new());
+    let config = Arc::new(ConfigShared::new_loaded());
     let effects: EffectsShared = Arc::new(EffectsState::default());
     let hold = Arc::new(AtomicBool::new(false));
     let status = Arc::new(Mutex::new(ursa_minor_ffb::SimStatus::Disconnected));
@@ -37,6 +37,11 @@ fn main() -> Result<()> {
     match logs.try_init_file_prefer_exe_dir() {
         Ok(p) => logs.push(format!("File logging enabled → {}", p.display())),
         Err(e) => logs.push(format!("File logging disabled: {}", e)),
+    }
+
+    match ursa_minor_ffb::settings::load() {
+        Some(_) => logs.push("Settings loaded from disk".to_string()),
+        None => logs.push("No saved settings found, using defaults".to_string()),
     }
 
     {
@@ -79,6 +84,8 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
+    let initial_config_rev = config.current_rev();
+
     let app = UiState {
         controller_connected,
 
@@ -110,6 +117,9 @@ fn main() -> Result<()> {
 
         rx_ui,
         tx_ui: tx_ui.clone(),
+
+        saved_config_rev: initial_config_rev,
+        pending_save_at: None,
     };
 
     let tx_ui_for_tray = tx_ui.clone();

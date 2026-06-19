@@ -1,4 +1,5 @@
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -19,7 +20,8 @@ pub struct FlightVars {
     pub spoilers_pct: f64, // Положение спойлеров в % (0.0 - 100.0)
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RumbleConfig {
     pub overspeed_enabled: bool,
     pub overspeed_threshold_kn: f32,
@@ -132,6 +134,16 @@ impl ConfigShared {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(RumbleConfig::default()),
+            rev: AtomicU64::new(1),
+        }
+    }
+
+    /// Создаёт ConfigShared, пытаясь загрузить ранее сохранённые настройки с диска.
+    /// Если файл настроек не найден или повреждён, используются значения по умолчанию.
+    pub fn new_loaded() -> Self {
+        let cfg = crate::settings::load().unwrap_or_default();
+        Self {
+            inner: Mutex::new(cfg),
             rev: AtomicU64::new(1),
         }
     }

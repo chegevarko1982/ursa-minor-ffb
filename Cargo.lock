@@ -3925,6 +3925,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "reqwest",
+ "serde",
  "serde_json",
  "thiserror",
  "widestring",
