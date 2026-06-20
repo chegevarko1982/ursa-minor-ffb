@@ -430,58 +430,72 @@ impl eframe::App for UiState {
 
                         ui.separator();
 
-                        ui.heading("Live Aircraft Data");
-                        
-                        egui::Grid::new("aircraft_data")
-                            .num_columns(2)
-                            .spacing(Vec2::new(20.0, 4.0))
-                            .show(ui, |ui| {
-                                let v = *self.last_vars.lock();
-                                match v {
-                                    Some(v) => {
-                                        ui.label("Airspeed (kt):");
-                                        ui.label(format!("{:.1}", v.airspeed_indicated));
-                                        ui.end_row();
-                                        
-                                        ui.label("GS (kt):");
-                                        ui.label(format!("{:.1}", v.ground_speed_kt));
-                                        ui.end_row();
-                                        
-                                        ui.label("On Ground:");
-                                        ui.label(v.on_ground.to_string());
-                                        ui.end_row();
-                                        
-                                        ui.label("Bank (°):");
-                                        ui.label(format!("{:.1}", v.bank_deg));
-                                        ui.end_row();
-                                        
-                                        ui.label("Flaps (%):");
-                                        ui.label(format!("{:.0}", v.flaps_pct));
-                                        ui.end_row();
-                                        
-                                        ui.label("Gear:");
-                                        ui.label(if v.gear_handle > 0.5 { "Down" } else { "Up" });
-                                        ui.end_row();
+ui.heading("Live Aircraft Data");
 
-                                        ui.label("Spoilers (%):");
-                                        ui.label(format!("{:.0}", v.spoilers_pct));
-                                        ui.end_row();
-                                        
-                                        ui.label("Stall:");
-                                        ui.label(v.stalled.to_string());
-                                        ui.end_row();
-                                        
-                                        ui.label("Paused:");
-                                        ui.label(v.paused.to_string());
-                                        ui.end_row();
-                                    }
-                                    None => {
-                                        ui.label("No data");
-                                        ui.label("");
-                                        ui.end_row();
-                                    }
-                                }
-                            });
+egui::Grid::new("aircraft_data")
+    .num_columns(2)
+    .spacing(Vec2::new(20.0, 4.0))
+    .show(ui, |ui| {
+        let v = *self.last_vars.lock();
+        match v {
+            Some(v) => {
+                ui.label("Airspeed (kt):");
+                ui.label(format!("{:.1}", v.airspeed_indicated));
+                ui.end_row();
+
+                ui.label("GS (kt):");
+                ui.label(format!("{:.1}", v.ground_speed_kt));
+                ui.end_row();
+
+                ui.label("On Ground:");
+                ui.label(v.on_ground.to_string());
+                ui.end_row();
+
+                ui.label("Bank (°):");
+                ui.label(format!("{:.1}", v.bank_deg));
+                ui.end_row();
+
+                ui.label("Flaps (%):");
+                ui.label(format!("{:.0}", v.flaps_pct));
+                ui.end_row();
+
+                ui.label("Gear:");
+                ui.label(if v.gear_handle > 0.5 { "Down" } else { "Up" });
+                ui.end_row();
+
+                ui.label("Spoilers (%):");
+                ui.label(format!("{:.0}", v.spoilers_pct));
+                ui.end_row();
+
+                // --- ДОБАВЛЕНА ТЕЛЕМЕТРИЯ ОБЖАТИЯ СТОЕК ШАССИ ---
+                ui.label("Nose Gear (%):");
+                ui.label(format!("{:.1}", v.gear_comp_nose));
+                ui.end_row();
+
+                ui.label("Left Main (%):");
+                ui.label(format!("{:.1}", v.gear_comp_left));
+                ui.end_row();
+
+                ui.label("Right Main (%):");
+                ui.label(format!("{:.1}", v.gear_comp_right));
+                ui.end_row();
+                // ------------------------------------------------
+
+                ui.label("Stall:");
+                ui.label(v.stalled.to_string());
+                ui.end_row();
+
+                ui.label("Paused:");
+                ui.label(v.paused.to_string());
+                ui.end_row();
+            }
+            None => {
+                ui.label("No data");
+                ui.label("");
+                ui.end_row();
+            }
+        }
+    });
                     });
             });
         }

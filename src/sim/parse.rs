@@ -19,6 +19,9 @@ pub fn parse_main_elems(
         ground_speed_kt: elem.get(9).copied().unwrap_or(0.0).max(0.0),
         paused: false, // Наш форс false для обхода бага паузы в MSFS 2024
         spoilers_pct: elem.get(10).copied().unwrap_or(0.0).clamp(0.0, 100.0), // Индекс скорректирован на 10!
+        gear_comp_nose: elem.get(11).copied().unwrap_or(0.0),
+        gear_comp_left: elem.get(12).copied().unwrap_or(0.0),
+        gear_comp_right: elem.get(13).copied().unwrap_or(0.0),
     };
 
     sanitize_flight_vars(&mut fv, ias_deadband_kn);
@@ -52,7 +55,7 @@ pub fn flight_status(fv: &FlightVars) -> SimStatus {
 mod tests {
     use super::*;
 
-    fn sample_elems() -> [f64; 11] {
+fn sample_elems() -> [f64; 14] {
         [
             120.0, // 0: IAS
             0.0,   // 1: on ground
@@ -60,11 +63,14 @@ mod tests {
             50.0,  // 3: flaps L
             70.0,  // 4: flaps R
             2.0,   // 5: flaps index
-            1.0,   // 6: gear
-            0.0,   // 7: stall
+            1.0,   // 6: gear handle
+            0.0,   // 7: stalled
             100.0, // 8: sim time
             25.0,  // 9: ground speed
-            45.0,  // 10: spoilers (индекс 10)
+            45.0,  // 10: spoilers
+            0.0,   // 11: gear_comp_nose (default)
+            0.0,   // 12: gear_comp_left (default)
+            0.0,   // 13: gear_comp_right (default)
         ]
     }
 

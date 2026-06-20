@@ -294,9 +294,11 @@ pub fn sim_worker(
                 ("GEAR HANDLE POSITION", "Bool"),
                 ("STALL WARNING", "Bool"),
                 ("ABSOLUTE TIME", "Seconds"),
-                ("GROUND VELOCITY", "Knots"),
-                // Строку "PAUSED" удалили. Теперь спойлеры железно сидят на 11-м месте (индекс 10)
+                ("GROUND VELOCITY", "Knots"), // Строку "PAUSED" удалили. Теперь спойлеры железно сидят на 11-м месте (индекс 10)
                 ("SPOILERS HANDLE POSITION", "Percent"),
+                ("GEAR ANIMATION POSITION:0", "Percent"),
+                ("GEAR ANIMATION POSITION:1", "Percent"),
+                ("GEAR ANIMATION POSITION:2", "Percent"),
             ];
             for (name, unit) in defs {
                 let hr = add(DEF_MAIN, name, unit);
