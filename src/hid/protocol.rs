@@ -111,11 +111,9 @@ mod tests {
             WW_PID_URSA_MINOR_FIGHTER_L,
             WW_PID_URSA_MINOR_SPACE_L,
         ];
-        let right_pids = [
-            WW_PID_URSA_MINOR_AIRBUS_R,
-            WW_PID_URSA_MINOR_FIGHTER_R,
-            WW_PID_URSA_MINOR_SPACE_R,
-        ];
+        // Fighter R (0xBC2A) — особый случай: хак для Combat-версии прошивки,
+        // отдаёт перехваченный байт 0x0A вместо обычного 0x08.
+        let right_pids = [WW_PID_URSA_MINOR_AIRBUS_R, WW_PID_URSA_MINOR_SPACE_R];
 
         for pid in left_pids {
             assert_eq!(handed_selector_for_pid(pid), 0x07, "pid=0x{pid:04X}");
@@ -123,6 +121,11 @@ mod tests {
         for pid in right_pids {
             assert_eq!(handed_selector_for_pid(pid), 0x08, "pid=0x{pid:04X}");
         }
+        assert_eq!(
+            handed_selector_for_pid(WW_PID_URSA_MINOR_FIGHTER_R),
+            0x0A,
+            "pid=0x{WW_PID_URSA_MINOR_FIGHTER_R:04X} (Combat hack)"
+        );
     }
 
     #[test]

@@ -77,7 +77,7 @@ impl RumbleEngine {
             ground_active: at_or_above_end,
             stall_active: fv.stalled,
             bank_active: !fv.on_ground && fv.bank_deg.abs() > bank_threshold_deg,
-            base_active: !fv.on_ground && fv.airspeed_indicated > overspeed_threshold_kn,
+            base_active: !fv.on_ground && fv.airspeed_indicated > cfg.base_airspeed,
             spoilers_active,
             ..Default::default() // <-- Добавьте эту строчку, она закроет ошибку по закрылкам и шасси
         };
@@ -94,6 +94,10 @@ impl RumbleEngine {
             s.flap_t1 = fv.sim_time_s + cfg.flaps_bump_duration_s * steps as f64;
             s.flap_peak = cfg.flaps_peak as f64;
             s.prev_flaps_idx = fv.flaps_index;
+            // Важно: обновляем и prev_flaps_pct, иначе на следующем кадре (когда
+            // индекс уже не меняется) dflap будет считаться от устаревшего значения
+            // и спровоцирует ложный лишний бамп закрылков.
+            s.prev_flaps_pct = fv.flaps_pct;
         } else {
             let dflap = (fv.flaps_pct - s.prev_flaps_pct).abs();
             if dflap >= cfg.flaps_bump_eps_pct {
@@ -135,6 +139,15 @@ impl RumbleEngine {
                     ground_term = (cfg.ground_roll as f64) * phase;
                 }
             }
+        }
+
+        // Базовый фон полёта: лёгкий гул/вибрация в воздухе выше base_airspeed,
+        // не связан с предупреждением о превышении скорости (overspeed).
+        const BASE_RUMBLE_MAGNITUDE: f64 = 40.0;
+        if !fv.on_ground && fv.airspeed_indicated > cfg.base_airspeed {
+            let excess = fv.airspeed_indicated - cfg.base_airspeed;
+            let ratio = (excess / 60.0).clamp(0.0, 1.0);
+            air_term += ratio * BASE_RUMBLE_MAGNITUDE;
         }
 
         if cfg.overspeed_enabled {

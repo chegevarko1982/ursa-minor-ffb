@@ -2,7 +2,7 @@ use crate::{FlightVars, SimStatus};
 
 pub fn parse_main_elems(
     elem: &[f64],
-    _paused_from_events: bool, // Компилятор будет доволен
+    paused_from_events: bool,
     ias_deadband_kn: f64,
 ) -> FlightVars {
     let mut fv = FlightVars {
@@ -17,7 +17,7 @@ pub fn parse_main_elems(
         stalled: elem.get(7).copied().unwrap_or(0.0) != 0.0,
         sim_time_s: elem.get(8).copied().unwrap_or(0.0),
         ground_speed_kt: elem.get(9).copied().unwrap_or(0.0).max(0.0),
-        paused: false, // Наш форс false для обхода бага паузы в MSFS 2024
+        paused: paused_from_events,
         spoilers_pct: elem.get(10).copied().unwrap_or(0.0).clamp(0.0, 100.0), // Индекс скорректирован на 10!
         gear_comp_nose: elem.get(11).copied().unwrap_or(0.0),
         gear_comp_left: elem.get(12).copied().unwrap_or(0.0),

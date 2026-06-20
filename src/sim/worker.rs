@@ -473,11 +473,14 @@ pub fn sim_worker(
                                     continue;
                                 }
 
-                                let mut elem = [0f64; 12];
+                                // 14 элементов: SPOILERS HANDLE POSITION (10) и
+                                // GEAR ANIMATION POSITION:0/1/2 (11/12/13) — буфер
+                                // на 12 обрезал левую/правую стойки шасси (всегда 0.0).
+                                let mut elem = [0f64; 14];
                                 if want_f64 {
                                     let v = std::slice::from_raw_parts(
                                         data_ptr as *const f64,
-                                        count.min(12),
+                                        count.min(14),
                                     );
                                     for (i, &x) in v.iter().enumerate() {
                                         elem[i] = x;
@@ -485,7 +488,7 @@ pub fn sim_worker(
                                 } else {
                                     let v = std::slice::from_raw_parts(
                                         data_ptr as *const f32,
-                                        count.min(12),
+                                        count.min(14),
                                     );
                                     for (i, &x) in v.iter().enumerate() {
                                         elem[i] = x as f64;
