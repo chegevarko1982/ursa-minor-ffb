@@ -21,7 +21,6 @@ pub struct FlightVars {
     pub gear_comp_nose: f64,
     pub gear_comp_left: f64,
     pub gear_comp_right: f64,
-    pub trailing_edge_flaps_left_percent: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -41,7 +40,6 @@ pub struct RumbleConfig {
     pub gear_comp_left_peak: f32,
     pub gear_comp_right_enabled: bool,
     pub gear_comp_right_peak: f32,
-    pub gear_transit_enabled: bool,
 
     // Bank/Turb settings
     pub bank_enabled: bool,
@@ -64,10 +62,10 @@ pub struct RumbleConfig {
     pub thump_duty: f64,
     pub flaps_bump_duration_s: f64,
     pub flaps_bump_eps_pct: f64,
-    pub flaps_duty: f64,
     pub gear_bump_duration_s: f64,
 
     pub ground_enabled: bool,
+    pub ground_thump_enabled: bool,
     pub flaps_enabled: bool,
     pub gear_enabled: bool,
     pub stall_enabled: bool,
@@ -103,20 +101,15 @@ impl Default for RumbleConfig {
             taxi_start_kn: 3.0,
             taxi_end_enabled: true,
             taxi_end_kn: 10.0,
-            // ВНИМАНИЕ: thump_min_period_s ограничен полосой передачи на устройство —
-            // hid/worker.rs шлёт интенсивность не чаще раза в SEND_INTERVAL (сейчас 50мс = 20 Гц).
-            // Частота Найквиста этого канала = 10 Гц, поэтому min_period_s не должен
-            // быть меньше ~0.12-0.15с (6.7-8.3 Гц), иначе рост частоты с ростом GS
-            // перестанет ощущаться корректно (часть импульсов "съедается" между отправками).
-            thump_min_period_s: 0.15,
-            thump_max_period_s: 1.3,
-            thump_duty: 0.18,
+            thump_min_period_s: 0.25,
+            thump_max_period_s: 0.90,
+            thump_duty: 0.22,
             flaps_bump_duration_s: 1.0,
             flaps_bump_eps_pct: 2.0,
-            flaps_duty: 0.6,
             gear_bump_duration_s: 0.8,
 
             ground_enabled: true,
+            ground_thump_enabled: true,
             flaps_enabled: true,
             gear_enabled: true,
             stall_enabled: true,
@@ -131,7 +124,6 @@ impl Default for RumbleConfig {
             gear_comp_left_enabled: true,
             gear_comp_left_peak: 155.0,
             gear_comp_right_enabled: true,
-            gear_transit_enabled: true,
             gear_comp_right_peak: 155.0,
 
             is_combat_edition: false,

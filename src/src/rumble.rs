@@ -2,12 +2,18 @@ use crate::{EffectsSnapshot, FlightVars, RumbleConfig};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RumbleState {
+    prev_flaps_pct: f64,
+    prev_flaps_idx: i32,
     prev_gear: f64,
+    flap_t0: f64,
+    flap_t1: f64,
+    flap_peak: f64,
     gear_t0: f64,
     gear_t1: f64,
     gear_peak: f64,
     bg_smoothed: f64,
     last_cfg_rev: u64,
+
     // Gear Strut Compression (Touchdown) tracking
     prev_sim_time_s: f64,
     prev_gear_comp_nose: f64,
@@ -19,14 +25,12 @@ pub struct RumbleState {
     gear_comp_nose_dyn_peak: f64,
     gear_comp_left_dyn_peak: f64,
     gear_comp_right_dyn_peak: f64,
+
     // Gear Transit tracking
     prev_gear_nose: f64,
     prev_gear_left: f64,
     prev_gear_right: f64,
     gear_doors_closed_t0: f64,
-    // Flaps Motor Hum tracking
-    last_flaps_percent: f64,
-    current_flaps_amplitude: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +53,8 @@ impl RumbleEngine {
     pub fn new() -> Self {
         Self {
             state: RumbleState {
+                flap_t0: -1.0,
+                flap_t1: -1.0,
                 gear_t0: -1.0,
                 gear_t1: -1.0,
                 gear_comp_nose_t0: -1.0,
@@ -59,8 +65,6 @@ impl RumbleEngine {
                 prev_gear_left: 0.0,
                 prev_gear_right: 0.0,
                 gear_doors_closed_t0: -1.0,
-                last_flaps_percent: 0.0,
-                current_flaps_amplitude: 0.0,
                 ..Default::default()
             },
         }
@@ -77,7 +81,7 @@ impl RumbleEngine {
         cfg_rev: u64,
         hold: bool,
     ) -> RumbleOutput {
-        let gs = fv.ground_speed_kt;
+let gs = fv.ground_speed_kt;
         let start = if cfg.taxi_start_enabled { cfg.taxi_start_kn.min(cfg.taxi_end_kn - 0.1) } else { 0.0 };
         let end = if cfg.taxi_end_enabled { cfg.taxi_end_kn.max(start + 0.1) } else { 9999.0 };
 
@@ -88,11 +92,11 @@ impl RumbleEngine {
         let at_or_above_end = cfg.ground_enabled && cfg.taxi_end_enabled && fv.on_ground && gs >= end;
         let at_or_above_start = cfg.taxi_start_enabled && fv.on_ground && gs >= start;
 
-        let overspeed_threshold_kn = cfg.overspeed_threshold_kn as f64;
-        let bank_threshold_deg = cfg.bank_threshold_deg as f64;
+        let overspeed_threshold_kn = cfg.overspeed_threshold_kn as f64; 
+        let bank_threshold_deg = cfg.bank_threshold_deg as f64;     
 
-        let spoilers_active = cfg.spoilers_enabled
-            && fv.spoilers_pct > cfg.spoilers_threshold_pct
+        let spoilers_active = cfg.spoilers_enabled 
+            && fv.spoilers_pct > cfg.spoilers_threshold_pct 
             && fv.airspeed_indicated > 20.0;
 
         let mut effects = EffectsSnapshot {
@@ -155,64 +159,26 @@ impl RumbleEngine {
         }
         s.prev_sim_time_s = fv.sim_time_s;
 
-        // =========================================================================
-        // БЛОК ЗАКРЫЛКОВ (FLAPS MOTOR HUM)
-        // =========================================================================
-
-        // 1. Проверяем, движутся ли физически закрылки
-        let flaps_delta = (fv.flaps_pct - s.last_flaps_percent).abs();
-        let flaps_is_moving = flaps_delta > 0.01; // Переименовали, чтобы не затенять closure ниже
-
-        // Целевая рабочая мощность (0.8 — это примерно 200 из 255)
-        let max_amplitude = cfg.flaps_duty.clamp(0.01, 0.8);
-
-        // Ограничиваем dt, чтобы при лагах/паузах симулятора не было резкого скачка амплитуды
-        let dt_clamped = dt.min(0.1);
-
-        if flaps_is_moving {
-            // ----------------------------------------------------------------------
-            // НАСТРОЙКА ВРЕМЕНИ РАСКРУТКИ МОТОРА ЗАКРЫЛКОВ
-            // Теперь не зависит от FPS, используем реальное время dt_clamped.
-            // ----------------------------------------------------------------------
-            let ramp_up_time_s = 2.0; // Время раскрутки ~2 секунды
-            let step_up = max_amplitude * (dt_clamped / ramp_up_time_s);
-
-            // Плавно прибавляем силу
-            s.current_flaps_amplitude = (s.current_flaps_amplitude + step_up).min(max_amplitude);
+        if fv.flaps_index != s.prev_flaps_idx {
+            let steps = (fv.flaps_index - s.prev_flaps_idx).abs().max(1) as usize;
+            s.flap_t0 = fv.sim_time_s;
+            s.flap_t1 = fv.sim_time_s + cfg.flaps_bump_duration_s * steps as f64;
+            s.flap_peak = cfg.flaps_peak as f64;
+            s.prev_flaps_idx = fv.flaps_index;
+            // Важно: обновляем и prev_flaps_pct, иначе на следующем кадре (когда
+            // индекс уже не меняется) dflap будет считаться от устаревшего значения
+            // и спровоцирует ложный лишний бамп закрылков.
+            s.prev_flaps_pct = fv.flaps_pct;
         } else {
-            // Плавно глушим мотор при остановке
-            let ramp_down_time_s = 1.0; // Время затухания ~1 секунда (быстрее, чем раскрутка)
-            let step_down = max_amplitude * (dt_clamped / ramp_down_time_s);
-
-            // Плавно убавляем силу до нуля
-            s.current_flaps_amplitude = (s.current_flaps_amplitude - step_down).max(0.0);
+            let dflap = (fv.flaps_pct - s.prev_flaps_pct).abs();
+            if dflap >= cfg.flaps_bump_eps_pct {
+                s.flap_t0 = fv.sim_time_s;
+                s.flap_t1 = fv.sim_time_s + cfg.flaps_bump_duration_s;
+                let scale = (dflap / 12.5).clamp(0.5, 1.0);
+                s.flap_peak = (cfg.flaps_peak as f64) * scale;
+            }
+            s.prev_flaps_pct = fv.flaps_pct;
         }
-
-        // 2. Применяем эффект, если амплитуда больше минимального порога
-        // Так как RumbleOutput поддерживает только одну общую интенсивность (intensity: u8),
-        // а s.current_flaps_amplitude — это duty cycle (0.0 .. 0.8),
-        // мы должны сами сформировать вибрацию (программный ШИМ) на частоте 25 Гц.
-        let mut flaps_term: f64 = 0.0;
-        if cfg.flaps_enabled && s.current_flaps_amplitude > 0.01 {
-            let fixed_period = 0.04; // 0.04 с = 25 Гц
-            let cycle = (fv.sim_time_s / fixed_period).fract();
-
-            // Создаем пульсацию (от 0.0 до 1.0) в виде полуволн синуса
-            let oscillation = (std::f64::consts::PI * cycle).sin();
-
-            // Преобразуем duty cycle в силу вибрации (0 .. 255)
-            flaps_term = s.current_flaps_amplitude * 255.0 * oscillation;
-            effects.flaps_bump_active = true;
-        } else {
-            effects.flaps_bump_active = false;
-        }
-
-        // 3. Запоминаем позицию закрылков для следующего кадра
-        s.last_flaps_percent = fv.flaps_pct;
-
-        // =========================================================================
-        // БЛОК ВЫПУСКА/УБОРКИ ШАССИ (Gear Handle Bump)
-        // =========================================================================
 
         if (fv.gear_handle - s.prev_gear).abs() >= 0.5 {
             s.gear_t0 = fv.sim_time_s;
@@ -224,67 +190,36 @@ impl RumbleEngine {
         let mut ground_term: f64 = 0.0;
         let mut air_term: f64 = 0.0;
         let mut transients: f64 = 0.0;
-        let mut bank_term: f64 = 0.0;
+        let mut bank_term: f64 = 0.0; 
         let mut spoilers_term: f64 = 0.0;
 
-        // Ground Roll effect — стук о стыки бетонных плит на рулении/разбеге.
-        // Частота ударов линейно растёт с наземной скоростью (GS). При превышении
-        // taxi_end duty плавно растёт до 1.0 — непрерывный гул.
-        if cfg.ground_enabled && fv.on_ground && gs >= start_active {
+        // Ground Roll effect — равномерный стук о стыки плит (как на бетонной ВПП).
+        // Управляется одним чекбоксом (ground_enabled) и границами Start/End:
+        // частота ударов растёт от Start до End, выше End остаётся на максимуме
+        // (равном частоте на End) — удары не учащаются дальше и не меняют характер.
+        // Амплитуда каждого удара постоянна (не зависит от скорости) —
+        // именно это даёт ощущение "равномерного стука", а не нарастающего гула.
+        if cfg.ground_enabled {
+            if fv.on_ground && gs >= start_active {
+                let t_norm = ((gs - start) / (end - start)).clamp(0.0, 1.0);
+                let period = cfg.thump_max_period_s - t_norm * (cfg.thump_max_period_s - cfg.thump_min_period_s);
+                let cycle = (fv.sim_time_s / period).fract();
+                let duty = cfg.thump_duty.clamp(0.05, 0.4);
 
-            // ═══════════════════════════════════════════════════════════════════
-            //  ПАРАМЕТРЫ ЭФФЕКТА «СТУК О СТЫКИ ПЛИТ» — правь здесь при тестах
-            // ═══════════════════════════════════════════════════════════════════
-
-            // Максимальный период (с) — время между ударами на МИНИМАЛЬНОЙ скорости разбега.
-            // Больше = реже удары в самом начале. Диапазон: 0.5 .. 2.0
-            let thump_max_period_s: f64 = 1.5;
-
-            // Минимальный период (с) — время между ударами у верхней уставки (taxi_end).
-            // Берётся из настроек программы (cfg.thump_min_period_s, по умолч. 0.15 с ≈ 7 уд/с).
-            let thump_min_period_s: f64 = cfg.thump_min_period_s;
-
-            // Длина импульса — доля периода, которую занимает сам удар (0.05 .. 0.4).
-            // 0.18 = удар длится 18% периода, остаток — тишина. Меньше = короче и резче.
-            // Берётся из настроек программы (cfg.thump_duty, по умолч. 0.18).
-            let thump_duty: f64 = cfg.thump_duty.clamp(0.05, 0.4);
-
-            // Сила удара — пиковая амплитуда полусинусного импульса (0 .. 255).
-            // Берётся из настроек программы (cfg.ground_roll, по умолч. 38).
-            let thump_amplitude: f64 = cfg.ground_roll as f64;
-
-            // Диапазон блендинга в гул (узлы) — за сколько узлов ПОСЛЕ taxi_end
-            // отдельные удары плавно сливаются в непрерывный гул (duty → 100%).
-            // Меньше = резче переход. Диапазон: 10 .. 60
-            let thump_blend_range_kn: f64 = 30.0;
-
-            // ═══════════════════════════════════════════════════════════════════
-
-            // Нормализованная GS в диапазоне [start_active .. end]
-            let t_norm = ((gs - start_active) / (end - start_active).max(0.1)).clamp(0.0, 1.0);
-
-            // Период линейно убывает с ростом GS: thump_max_period_s → thump_min_period_s
-            let period = thump_max_period_s - t_norm * (thump_max_period_s - thump_min_period_s);
-
-            // Выше taxi_end: duty плавно растёт до 1.0 → непрерывный гул
-            let blend_norm = ((gs - end) / thump_blend_range_kn).clamp(0.0, 1.0);
-            let duty = thump_duty + blend_norm * (1.0 - thump_duty);
-
-            // Полусинусный импульс: нет щелчков на входе/выходе (sin(0)=0, sin(π)=0)
-            let cycle = (fv.sim_time_s / period).fract();
-            if cycle < duty {
-                let p = (cycle / duty).clamp(0.0, 1.0);
-                ground_term = (std::f64::consts::PI * p).sin() * thump_amplitude;
+                if cycle < duty {
+                    let p = (cycle / duty).clamp(0.0, 1.0);
+                    ground_term = (std::f64::consts::PI * p).sin() * (cfg.ground_roll as f64);
+                }
             }
         }
 
-        // Базовый фон полёта удалён по требованию пользователя
-        // const BASE_RUMBLE_MAGNITUDE: f64 = 40.0;
-        // if cfg.base_enabled && !fv.on_ground && fv.airspeed_indicated > cfg.base_airspeed {
-        //     let excess = fv.airspeed_indicated - cfg.base_airspeed;
-        //     let ratio = (excess / 60.0).clamp(0.0, 1.0);
-        //     air_term += ratio * BASE_RUMBLE_MAGNITUDE;
-        // }
+         // Базовый фон полёта удалён по требованию пользователя
+         // const BASE_RUMBLE_MAGNITUDE: f64 = 40.0;
+         // if cfg.base_enabled && !fv.on_ground && fv.airspeed_indicated > cfg.base_airspeed {
+         //     let excess = fv.airspeed_indicated - cfg.base_airspeed;
+         //     let ratio = (excess / 60.0).clamp(0.0, 1.0);
+         //     air_term += ratio * BASE_RUMBLE_MAGNITUDE;
+         // }
 
         if cfg.overspeed_enabled {
             if !fv.on_ground && fv.airspeed_indicated > overspeed_threshold_kn {
@@ -318,6 +253,16 @@ impl RumbleEngine {
 
         if cfg.stall_enabled && fv.stalled {
             transients = transients.max(cfg.stall_ceiling as f64);
+        }
+
+        if cfg.flaps_enabled {
+            let flap_active = fv.sim_time_s >= s.flap_t0 && fv.sim_time_s <= s.flap_t1 && s.flap_peak > 0.0;
+            if flap_active {
+                let elapsed = fv.sim_time_s - s.flap_t0;
+                let period = 1.0_f64.max(cfg.flaps_bump_duration_s);
+                transients += s.flap_peak * (std::f64::consts::PI * ((elapsed % period) / period)).sin();
+            }
+            effects.flaps_bump_active = flap_active;
         }
 
         if cfg.gear_enabled {
@@ -355,8 +300,7 @@ impl RumbleEngine {
         // --- БЛОК: ЭФФЕКТ ДВИЖЕНИЯ ШАССИ (Gear Transit + Gear Doors Closed) ---
         // Раньше не был привязан ни к одному чекбоксу и работал постоянно.
         // Теперь оба под общим cfg.gear_transit_enabled.
-        // Переименовали closure, чтобы избежать конфликта с переменной закрылков
-        let gear_is_moving = |pos: f64, prev: f64| -> bool {
+        let is_moving = |pos: f64, prev: f64| -> bool {
             pos > 0.0 && pos < 50.0 && (pos - prev).abs() >= 0.001
         };
 
@@ -364,9 +308,9 @@ impl RumbleEngine {
 
         if cfg.gear_transit_enabled {
             // Использует переменные анимации шасси из FlightVars
-            let moving_count = gear_is_moving(fv.gear_comp_nose, s.prev_gear_nose) as i32
-                             + gear_is_moving(fv.gear_comp_left, s.prev_gear_left) as i32
-                             + gear_is_moving(fv.gear_comp_right, s.prev_gear_right) as i32;
+            let moving_count = is_moving(fv.gear_comp_nose, s.prev_gear_nose) as i32
+                             + is_moving(fv.gear_comp_left, s.prev_gear_left) as i32
+                             + is_moving(fv.gear_comp_right, s.prev_gear_right) as i32;
 
             if moving_count > 0 {
                 let multiplier = match moving_count {
@@ -376,17 +320,17 @@ impl RumbleEngine {
                     _ => 0.0,
                 };
 
-                let beat_duration = 60.0 / 80.0;
+                let beat_duration = 60.0 / 80.0; 
                 let current_beat = fv.sim_time_s / beat_duration;
-                let beat_phase = current_beat.fract();
-                let beat_index = (current_beat.floor() as i64) % 3;
+                let beat_phase = current_beat.fract(); 
+                let beat_index = (current_beat.floor() as i64) % 3; 
 
                 if beat_index == 0 {
                     if beat_phase < 0.35 { gear_transit_term += 40.0 * multiplier; }
                 } else {
                     if beat_phase < 0.15 { gear_transit_term += 15.0 * multiplier; }
                 }
-            }
+            } 
 
             // Детекция финала уборки (все стойки в 0.0)
             let all_up_now = fv.gear_comp_nose <= 0.0 && fv.gear_comp_left <= 0.0 && fv.gear_comp_right <= 0.0;
@@ -424,9 +368,6 @@ impl RumbleEngine {
         } else {
             s.bg_smoothed += (cfg.smoothing_alpha.clamp(0.0, 1.0) as f64) * (bg - s.bg_smoothed);
         }
-
-        // Подмешиваем вибрацию закрылков в transients (чтобы она не сглаживалась)
-        transients += flaps_term;
 
         let mut total = s.bg_smoothed + ground_term + transients + bank_term + spoilers_term;
         if cfg.stall_enabled && fv.stalled {

@@ -446,19 +446,6 @@ impl eframe::App for UiState {
 
                             ui.add_space(8.0);
 
-                            // Gear Transit & Doors Closed (вибрация во время движения стоек
-                            // + удар при фиксации на замке). Раньше работали без чекбокса.
-                            ui.horizontal(|ui| {
-                                let mut gear_transit_enabled = cfg.gear_transit_enabled;
-                                if ui.checkbox(&mut gear_transit_enabled, "").changed() {
-                                    _changed = true;
-                                }
-                                cfg.gear_transit_enabled = gear_transit_enabled;
-                                ui.label(RichText::new("Gear Transit & Doors").strong());
-                            });
-
-                            ui.add_space(8.0);
-
                             // Bank effect - только чекбокс и порог
                             let mut bank_enabled = cfg.bank_enabled;
                             ui.horizontal(|ui| {

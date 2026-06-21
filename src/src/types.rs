@@ -21,7 +21,6 @@ pub struct FlightVars {
     pub gear_comp_nose: f64,
     pub gear_comp_left: f64,
     pub gear_comp_right: f64,
-    pub trailing_edge_flaps_left_percent: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,7 +63,6 @@ pub struct RumbleConfig {
     pub thump_duty: f64,
     pub flaps_bump_duration_s: f64,
     pub flaps_bump_eps_pct: f64,
-    pub flaps_duty: f64,
     pub gear_bump_duration_s: f64,
 
     pub ground_enabled: bool,
@@ -113,7 +111,6 @@ impl Default for RumbleConfig {
             thump_duty: 0.18,
             flaps_bump_duration_s: 1.0,
             flaps_bump_eps_pct: 2.0,
-            flaps_duty: 0.6,
             gear_bump_duration_s: 0.8,
 
             ground_enabled: true,

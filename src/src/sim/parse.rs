@@ -22,7 +22,6 @@ pub fn parse_main_elems(
         gear_comp_nose: elem.get(11).copied().unwrap_or(0.0),
         gear_comp_left: elem.get(12).copied().unwrap_or(0.0),
         gear_comp_right: elem.get(13).copied().unwrap_or(0.0),
-        trailing_edge_flaps_left_percent: elem.get(3).copied().unwrap_or(0.0).clamp(0.0, 100.0),
     };
 
     sanitize_flight_vars(&mut fv, ias_deadband_kn);
