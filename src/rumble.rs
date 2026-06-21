@@ -27,6 +27,8 @@ pub struct RumbleState {
     // Flaps Motor Hum tracking
     last_flaps_percent: f64,
     current_flaps_amplitude: f64,
+    // Ground Roll (физическая модель удара о стыки плит) tracking
+    thump_last_time_s: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +63,7 @@ impl RumbleEngine {
                 gear_doors_closed_t0: -1.0,
                 last_flaps_percent: 0.0,
                 current_flaps_amplitude: 0.0,
+                thump_last_time_s: -1000.0,
                 ..Default::default()
             },
         }
@@ -121,13 +124,37 @@ impl RumbleEngine {
         const GEAR_COMP_TOUCHDOWN_THRESHOLD: f64 = 50.1;
         const GEAR_COMP_BUMP_DURATION: f64 = 0.15; // Резкий импульс за 0.15с
 
+        // ═══════════════════════════════════════════════════════════════════
+        // РЕМАРКА ДЛЯ РУЧНОЙ НАСТРОЙКИ (диапазоны силы эффектов):
+        //
+        // • Сжатие стоек шасси (touchdown bump). Слайдер gear_comp_*_peak в UI
+        //   имеет диапазон 0..55 — это НЕ сырая сила, а "запас сверху" над
+        //   обязательным полом в 200. Слайдер=0 → всегда строго 200 (мягкий
+        //   предел мотора при любой посадке). Слайдер=55 → от 200 (мягкая
+        //   посадка) до 255 (жёсткая, severity на максимуме). Итоговая сила
+        //   физически не может выйти за пределы [200..255].
+        //
+        // • Удар о стыки плит (ground_roll). Слайдер в UI — 0..50, это и есть
+        //   итоговый потолок силы (amplitude_curve лишь масштабирует от 0 до
+        //   этого значения). Должен оставаться мягким фоновым эффектом и НЕ
+        //   соперничать по ощущению с ударом сжатия стоек (200-255).
+        // ═══════════════════════════════════════════════════════════════════
+        const GEAR_COMP_PEAK_MIN: f64 = 200.0;
+        const GEAR_COMP_PEAK_MAX: f64 = 255.0;
+        const GEAR_COMP_HEADROOM_MAX: f64 = 55.0; // слайдер gear_comp_*_peak: 0..55
+        const GROUND_THUMP_PEAK_MIN: f64 = 0.0;
+        const GROUND_THUMP_PEAK_MAX: f64 = 50.0;
+
         if cfg.gear_comp_enabled && dt > 0.0 {
             // Nose Gear
             if cfg.gear_comp_nose_enabled && fv.gear_comp_nose >= GEAR_COMP_TOUCHDOWN_THRESHOLD && s.prev_gear_comp_nose < GEAR_COMP_TOUCHDOWN_THRESHOLD {
                 s.gear_comp_nose_t0 = fv.sim_time_s;
                 let comp_rate = (fv.gear_comp_nose - s.prev_gear_comp_nose) / dt;
                 let severity = (comp_rate / 100.0).clamp(0.3, 2.5);
-                s.gear_comp_nose_dyn_peak = (cfg.gear_comp_nose_peak as f64) * severity;
+                let intensity_frac = ((severity - 0.3) / (2.5 - 0.3)).clamp(0.0, 1.0);
+                let headroom = (cfg.gear_comp_nose_peak as f64).clamp(0.0, GEAR_COMP_HEADROOM_MAX);
+                let raw_peak = GEAR_COMP_PEAK_MIN + headroom * intensity_frac;
+                s.gear_comp_nose_dyn_peak = raw_peak.clamp(GEAR_COMP_PEAK_MIN, GEAR_COMP_PEAK_MAX);
             }
             s.prev_gear_comp_nose = fv.gear_comp_nose;
 
@@ -136,7 +163,10 @@ impl RumbleEngine {
                 s.gear_comp_left_t0 = fv.sim_time_s;
                 let comp_rate = (fv.gear_comp_left - s.prev_gear_comp_left) / dt;
                 let severity = (comp_rate / 100.0).clamp(0.3, 2.5);
-                s.gear_comp_left_dyn_peak = (cfg.gear_comp_left_peak as f64) * severity;
+                let intensity_frac = ((severity - 0.3) / (2.5 - 0.3)).clamp(0.0, 1.0);
+                let headroom = (cfg.gear_comp_left_peak as f64).clamp(0.0, GEAR_COMP_HEADROOM_MAX);
+                let raw_peak = GEAR_COMP_PEAK_MIN + headroom * intensity_frac;
+                s.gear_comp_left_dyn_peak = raw_peak.clamp(GEAR_COMP_PEAK_MIN, GEAR_COMP_PEAK_MAX);
             }
             s.prev_gear_comp_left = fv.gear_comp_left;
 
@@ -145,7 +175,10 @@ impl RumbleEngine {
                 s.gear_comp_right_t0 = fv.sim_time_s;
                 let comp_rate = (fv.gear_comp_right - s.prev_gear_comp_right) / dt;
                 let severity = (comp_rate / 100.0).clamp(0.3, 2.5);
-                s.gear_comp_right_dyn_peak = (cfg.gear_comp_right_peak as f64) * severity;
+                let intensity_frac = ((severity - 0.3) / (2.5 - 0.3)).clamp(0.0, 1.0);
+                let headroom = (cfg.gear_comp_right_peak as f64).clamp(0.0, GEAR_COMP_HEADROOM_MAX);
+                let raw_peak = GEAR_COMP_PEAK_MIN + headroom * intensity_frac;
+                s.gear_comp_right_dyn_peak = raw_peak.clamp(GEAR_COMP_PEAK_MIN, GEAR_COMP_PEAK_MAX);
             }
             s.prev_gear_comp_right = fv.gear_comp_right;
         } else {
@@ -228,54 +261,71 @@ impl RumbleEngine {
         let mut spoilers_term: f64 = 0.0;
 
         // Ground Roll effect — стук о стыки бетонных плит на рулении/разбеге.
-        // Частота ударов линейно растёт с наземной скоростью (GS). При превышении
-        // taxi_end duty плавно растёт до 1.0 — непрерывный гул.
+        // ФИЗИЧЕСКАЯ МОДЕЛЬ: период удара = длина_плиты / скорость (t = S / V).
+        // Время — fv.sim_time_s (НЕ Instant::now()), чтобы корректно работать
+        // на паузе симулятора и при ускорении времени (time acceleration).
         if cfg.ground_enabled && fv.on_ground && gs >= start_active {
 
             // ═══════════════════════════════════════════════════════════════════
             //  ПАРАМЕТРЫ ЭФФЕКТА «СТУК О СТЫКИ ПЛИТ» — правь здесь при тестах
             // ═══════════════════════════════════════════════════════════════════
 
-            // Максимальный период (с) — время между ударами на МИНИМАЛЬНОЙ скорости разбега.
-            // Больше = реже удары в самом начале. Диапазон: 0.5 .. 2.0
-            let thump_max_period_s: f64 = 1.5;
+            // Длина одной бетонной плиты ВПП в метрах — из настроек программы.
+            let slab_length_m = cfg.runway_slab_length_m.max(0.5) as f64;
 
-            // Минимальный период (с) — время между ударами у верхней уставки (taxi_end).
-            // Берётся из настроек программы (cfg.thump_min_period_s, по умолч. 0.15 с ≈ 7 уд/с).
-            let thump_min_period_s: f64 = cfg.thump_min_period_s;
+            // Длительность одного импульса (удара) в секундах — из настроек программы.
+            let thump_duration_s = (cfg.thump_duration_ms.max(1.0) / 1000.0) as f64;
 
-            // Длина импульса — доля периода, которую занимает сам удар (0.05 .. 0.4).
-            // 0.18 = удар длится 18% периода, остаток — тишина. Меньше = короче и резче.
-            // Берётся из настроек программы (cfg.thump_duty, по умолч. 0.18).
-            let thump_duty: f64 = cfg.thump_duty.clamp(0.05, 0.4);
-
-            // Сила удара — пиковая амплитуда полусинусного импульса (0 .. 255).
-            // Берётся из настроек программы (cfg.ground_roll, по умолч. 38).
+            // Сила удара — пиковая амплитуда (0..255) — из настроек программы.
             let thump_amplitude: f64 = cfg.ground_roll as f64;
-
-            // Диапазон блендинга в гул (узлы) — за сколько узлов ПОСЛЕ taxi_end
-            // отдельные удары плавно сливаются в непрерывный гул (duty → 100%).
-            // Меньше = резче переход. Диапазон: 10 .. 60
-            let thump_blend_range_kn: f64 = 30.0;
 
             // ═══════════════════════════════════════════════════════════════════
 
-            // Нормализованная GS в диапазоне [start_active .. end]
-            let t_norm = ((gs - start_active) / (end - start_active).max(0.1)).clamp(0.0, 1.0);
+            // 1. Переводим текущую GS из узлов в метры в секунду (1 узел = 0.514444 м/с)
+            let speed_mps = gs * 0.514444;
 
-            // Период линейно убывает с ростом GS: thump_max_period_s → thump_min_period_s
-            let period = thump_max_period_s - t_norm * (thump_max_period_s - thump_min_period_s);
+            // 2а. Прогресс скорости от 0.0 до 1.0 в диапазоне [0 .. taxi_end_kn].
+            // Используется и для амплитуды, и для кривизны нарастания частоты периода.
+            let speed_progress = (gs / cfg.taxi_end_kn.max(0.1)).clamp(0.0, 1.0);
 
-            // Выше taxi_end: duty плавно растёт до 1.0 → непрерывный гул
-            let blend_norm = ((gs - end) / thump_blend_range_kn).clamp(0.0, 1.0);
-            let duty = thump_duty + blend_norm * (1.0 - thump_duty);
+            // 2б. "Чистый" физический период по формуле t = S / V, зажатый в безопасные
+            // для HID-канала границы [thump_min_period_s .. thump_max_period_s].
+            let physical_period_s = (slab_length_m / speed_mps)
+                .clamp(cfg.thump_min_period_s, cfg.thump_max_period_s);
 
-            // Полусинусный импульс: нет щелчков на входе/выходе (sin(0)=0, sin(π)=0)
-            let cycle = (fv.sim_time_s / period).fract();
-            if cycle < duty {
-                let p = (cycle / duty).clamp(0.0, 1.0);
-                ground_term = (std::f64::consts::PI * p).sin() * thump_amplitude;
+            // 2в. КОЭФФИЦИЕНT КРИВИЗНЫ (cfg.thump_period_curve): управляет тем, КАК БЫСТРО
+            // период сокращается (паузы между ударами укорачиваются) по мере роста скорости.
+            // Чистая физика (t = S/V) сокращает период очень резко уже на малых скоростях —
+            // этот коэффициент позволяет растянуть переход.
+            //   1.0 — без изменений (как физика просчитала)
+            //   >1.0 — период дольше остаётся близким к максимуму, резкое сокращение паузы
+            //          сдвигается к более высоким скоростям (плавнее на старте)
+            //   <1.0 — наоборот, период сокращается ещё быстрее, чем по чистой физике
+            let period_curve_exp = (cfg.thump_period_curve as f64).max(0.1);
+            let period_progress = speed_progress.powf(period_curve_exp);
+            let target_period_s = cfg.thump_max_period_s
+                - (cfg.thump_max_period_s - physical_period_s) * period_progress;
+
+            // 3. Нелинейное нарастание амплитуды (более резкий рост к верхней границе).
+            let amplitude_curve = speed_progress.powf(1.4);
+
+            // 4. Логика перезапуска цикла импульса (стык плиты позади — ждём следующий).
+            let time_since_last_thump = fv.sim_time_s - s.thump_last_time_s;
+            if time_since_last_thump >= target_period_s {
+                s.thump_last_time_s = fv.sim_time_s;
             }
+            let time_since_last_thump = fv.sim_time_s - s.thump_last_time_s;
+
+            // 5. Окно удара. Если период короче длительности импульса — удары сливаются
+            // в сплошной гул (актуально на высоких скоростях рулёжки/разбега).
+            if time_since_last_thump < thump_duration_s || target_period_s <= thump_duration_s {
+                let raw_term = thump_amplitude * amplitude_curve;
+                ground_term = raw_term.clamp(GROUND_THUMP_PEAK_MIN, GROUND_THUMP_PEAK_MAX);
+            }
+        } else {
+            // Эффект неактивен (в воздухе/стоит/выключен) — сбрасываем фазу,
+            // чтобы при следующем рулении удар не "досчитывал" старый интервал.
+            s.thump_last_time_s = fv.sim_time_s - 1000.0;
         }
 
         // Базовый фон полёта удалён по требованию пользователя

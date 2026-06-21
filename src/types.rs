@@ -34,6 +34,10 @@ pub struct RumbleConfig {
      pub overspeed_max_kn: f32,
 
     // Gear Strut Compression settings
+    // РЕМАРКА: слайдер *_peak в UI имеет диапазон 0..55 — это НЕ итоговая сила,
+    // а "запас сверху" над обязательным полом 200 (см. rumble.rs). 0 → всегда
+    // строго 200 (на любой посадке). 55 → диапазон 200 (мягкая посадка) ..
+    // 255 (жёсткая). Итоговая сила эффекта физически не выходит за [200..255].
     pub gear_comp_enabled: bool,
     pub gear_comp_nose_enabled: bool,
     pub gear_comp_nose_peak: f32,
@@ -48,6 +52,10 @@ pub struct RumbleConfig {
     pub bank_intensity: f32,     // Максимальная интенсивность (0-200)
     pub bank_threshold_deg: f32, // Порог срабатывания (0-90°)
 
+    // РЕМАРКА: слайдер ground_roll в UI имеет диапазон 0..50 — это и есть
+    // итоговый потолок силы эффекта стыков плит (amplitude_curve лишь
+    // масштабирует от 0 до этого значения). Мягкий фоновый эффект, НЕ должен
+    // соперничать по ощущению с ударом сжатия стоек (200-255).
     pub ground_roll: f32,
     pub flaps_peak: f32,
     pub gear_peak: f32,
@@ -62,6 +70,12 @@ pub struct RumbleConfig {
     pub thump_min_period_s: f64,
     pub thump_max_period_s: f64,
     pub thump_duty: f64,
+    // Физическая модель удара о стыки бетонных плит (заменяет старую duty-based модель)
+    pub runway_slab_length_m: f32, // Длина одной плиты ВПП в метрах
+    pub thump_duration_ms: f32,    // Длительность одного импульса удара в мс
+    // Коэффициент кривизны нарастания частоты ударов (см. ремарку в rumble.rs):
+    // 1.0 = чистая физика (t=S/V), >1.0 = плавнее на старте, <1.0 = резче на старте
+    pub thump_period_curve: f32,
     pub flaps_bump_duration_s: f64,
     pub flaps_bump_eps_pct: f64,
     pub flaps_duty: f64,
@@ -111,6 +125,9 @@ impl Default for RumbleConfig {
             thump_min_period_s: 0.15,
             thump_max_period_s: 1.3,
             thump_duty: 0.18,
+            runway_slab_length_m: 6.0,
+            thump_duration_ms: 300.0,
+            thump_period_curve: 2.5, // плавнее на старте, чем чистая физика
             flaps_bump_duration_s: 1.0,
             flaps_bump_eps_pct: 2.0,
             flaps_duty: 0.6,
@@ -127,12 +144,12 @@ impl Default for RumbleConfig {
 
             gear_comp_enabled: true,
             gear_comp_nose_enabled: true,
-            gear_comp_nose_peak: 140.0,
+            gear_comp_nose_peak: 25.0, // запас 0..55 над полом 200 → факт. 200..225..255
             gear_comp_left_enabled: true,
-            gear_comp_left_peak: 155.0,
+            gear_comp_left_peak: 30.0,
             gear_comp_right_enabled: true,
             gear_transit_enabled: true,
-            gear_comp_right_peak: 155.0,
+            gear_comp_right_peak: 30.0,
 
             is_combat_edition: false,
         }

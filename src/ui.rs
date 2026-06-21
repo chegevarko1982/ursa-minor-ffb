@@ -114,19 +114,39 @@ impl UiState {
         active: bool,
         on_change: &mut bool,
     ) {
+        Self::effect_row_hinted(ui, name, val, enabled, range, active, on_change, None);
+    }
+
+    fn effect_row_hinted(
+        ui: &mut egui::Ui,
+        name: &str,
+        val: &mut f32,
+        enabled: &mut bool,
+        range: std::ops::RangeInclusive<f32>,
+        active: bool,
+        on_change: &mut bool,
+        hint: Option<&str>,
+    ) {
         ui.horizontal(|ui| {
             let cb = ui.checkbox(enabled, "");
             if cb.changed() {
                 *on_change = true;
             }
             
-            ui.label(RichText::new(name).strong());
+            let name_label = ui.label(RichText::new(name).strong());
+            if let Some(h) = hint {
+                name_label.on_hover_text(h);
+            }
             
             ui.add_enabled_ui(*enabled, |ui| {
                 let slider = egui::Slider::new(val, range)
                     .trailing_fill(true)
                     .show_value(true);
-                if ui.add(slider).changed() {
+                let resp = ui.add(slider);
+                if let Some(h) = hint {
+                    resp.clone().on_hover_text(h);
+                }
+                if resp.changed() {
                     *on_change = true;
                 }
             });
@@ -275,14 +295,15 @@ impl eframe::App for UiState {
 
                             // Ground Roll
                             let mut ground_enabled = cfg.ground_enabled;
-                            UiState::effect_row(
+                            UiState::effect_row_hinted(
                                 ui,
                                 "Ground Roll",
                                 &mut cfg.ground_roll,
                                 &mut ground_enabled,
-                                0.0..=200.0,
+                                0.0..=50.0,
                                 ground_active || ground_thump_active,
                                 &mut _changed,
+                                Some("Факт. сила на выходе: 0–50 (мягкий фон, ниже удара сжатия стоек)"),
                             );
                             cfg.ground_enabled = ground_enabled;
 
@@ -331,6 +352,31 @@ impl eframe::App for UiState {
                                 cfg.taxi_start_kn = start.clamp(0.0, 249.5);
                                 cfg.taxi_end_kn = end.clamp(cfg.taxi_start_kn + 0.5, 250.0); // Изменили clamp до 250
                             }
+
+                            // Коэффициент кривизны нарастания частоты ударов.
+                            // >1.0 = плавнее на старте (пауза между ударами сокращается медленнее),
+                            // <1.0 = резче, чем чистая физика t=S/V; 1.0 = без коррекции.
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Label::new("    ").sense(egui::Sense::hover()));
+                                let lbl = ui.label(RichText::new("Period curve:").strong());
+                                lbl.on_hover_text(
+                                    "Как быстро сокращается пауза между ударами с ростом скорости.\n\
+                                     1.0 = чистая физика (t = длина плиты / скорость).\n\
+                                     Больше 1.0 = плавнее на старте рулёжки.\n\
+                                     Меньше 1.0 = резче, чем чистая физика."
+                                );
+                                let mut curve = cfg.thump_period_curve;
+                                let resp = ui.add(egui::Slider::new(&mut curve, 0.3..=5.0)
+                                    .trailing_fill(true)
+                                    .show_value(true));
+                                resp.clone().on_hover_text(
+                                    "1.0 = физика. Больше — медленнее ускоряется ритм ударов на старте."
+                                );
+                                if resp.changed() {
+                                    cfg.thump_period_curve = curve;
+                                    _changed = true;
+                                }
+                            });
 
                             ui.add_space(8.0);
 
@@ -404,42 +450,46 @@ impl eframe::App for UiState {
                             cfg.gear_comp_enabled = gear_comp_enabled;
 
                             ui.add_enabled_ui(gear_comp_enabled, |ui| {
+                                let headroom_hint = "Слайдер: запас 0–55 над полом 200. Факт. сила на выходе: 200–255";
                                 // Nose
                                 let mut nose_enabled = cfg.gear_comp_nose_enabled;
-                                UiState::effect_row(
+                                UiState::effect_row_hinted(
                                     ui,
                                     "Nose Peak",
                                     &mut cfg.gear_comp_nose_peak,
                                     &mut nose_enabled,
-                                    0.0..=255.0,
+                                    0.0..=55.0,
                                     self.effects.gear_comp_nose_active.load(Ordering::Relaxed),
                                     &mut _changed,
+                                    Some(headroom_hint),
                                 );
                                 cfg.gear_comp_nose_enabled = nose_enabled;
 
                                 // Left
                                 let mut left_enabled = cfg.gear_comp_left_enabled;
-                                UiState::effect_row(
+                                UiState::effect_row_hinted(
                                     ui,
                                     "Left Peak",
                                     &mut cfg.gear_comp_left_peak,
                                     &mut left_enabled,
-                                    0.0..=255.0,
+                                    0.0..=55.0,
                                     self.effects.gear_comp_left_active.load(Ordering::Relaxed),
                                     &mut _changed,
+                                    Some(headroom_hint),
                                 );
                                 cfg.gear_comp_left_enabled = left_enabled;
 
                                 // Right
                                 let mut right_enabled = cfg.gear_comp_right_enabled;
-                                UiState::effect_row(
+                                UiState::effect_row_hinted(
                                     ui,
                                     "Right Peak",
                                     &mut cfg.gear_comp_right_peak,
                                     &mut right_enabled,
-                                    0.0..=255.0,
+                                    0.0..=55.0,
                                     self.effects.gear_comp_right_active.load(Ordering::Relaxed),
                                     &mut _changed,
+                                    Some(headroom_hint),
                                 );
                                 cfg.gear_comp_right_enabled = right_enabled;
                             });
