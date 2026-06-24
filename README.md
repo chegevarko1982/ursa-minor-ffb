@@ -1,6 +1,8 @@
 # Ursa Minor FFB Ernesto edition
 BIG THANKS AUTHOR https://github.com/rtroncoso
 
+NEW FFB IMMERSIVE EFFECTS 
+
 Unlock the full potential of your Winwing Ursa Minor Sidestick with custom force-feedback and rumble effects powered by Microsoft Flight Simulator’s SimConnect API.
 
 This project is a lightweight desktop app written in Rust with an egui UI and HID output.
